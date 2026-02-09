@@ -15,9 +15,9 @@ jobs:
   build:
     runs-on: windows-2019
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.9'
       - name: Install dependencies
@@ -27,7 +27,7 @@ jobs:
         run: |
           pyinstaller --onefile --windowed --icon="app_icon.ico" --name "ProjectAxis_Admin" dashboard.py
       - name: Upload EXE
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ProjectAxis_Admin_App
           path: dist/ProjectAxis_Admin.exe
