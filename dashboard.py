@@ -53,7 +53,7 @@ class ProjectAxisDashboard(ctk.CTk):
         
         self.subtitle = ctk.CTkLabel(
             self.logo_frame,
-            text="Professional Management Platform",
+            text="Designed & Engineered for ProjectAxis by Subeesh",
             font=("Arial", 12),
             text_color="#94A3B8"
         )

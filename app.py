@@ -13,6 +13,8 @@ def start_my_app():
     from pathlib import Path
     import signal
     import atexit
+    import hashlib
+    import re
     
     global flask_thread, flask_app
     
@@ -89,6 +91,31 @@ def start_my_app():
         logger.info(f"Script mode: Config stored in {CONFIG_FILE}")
 
     flask_app = Flask(__name__)
+
+    # Helper functions for file naming and deletion
+    def clean_filename(text):
+        """Clean text to create safe filenames"""
+        if not text:
+            return ""
+        # Remove special characters and replace spaces with underscores
+        text = re.sub(r'[^\w\s-]', '', text)
+        text = re.sub(r'[-\s]+', '_', text)
+        return text[:50].strip('_').lower()  # Limit length
+    
+    def generate_filename(title, description, timestamp, suffix):
+        """Generate consistent filename for all uploads"""
+        title_part = clean_filename(title)[:20]
+        desc_part = clean_filename(description)[:15]
+        filename = f"{title_part}_{desc_part}_{timestamp}_{suffix}"
+        return hashlib.md5(filename.encode()).hexdigest()[:12] + ".webp"
+    
+    def extract_image_path_from_url(url, repo):
+        """Extract relative path from raw GitHub URL"""
+        if not url:
+            return None
+        pattern = rf"https://raw\.githubusercontent\.com/{re.escape(repo)}/main/(.+)"
+        match = re.match(pattern, url)
+        return match.group(1) if match else None
 
     SETUP_TEMPLATE = """
     <!DOCTYPE html>
@@ -608,6 +635,7 @@ def start_my_app():
                 text-align: center;
                 margin-bottom: 16px;
                 background: var(--light);
+                cursor: pointer;
             }
             
             .upload-icon {
@@ -652,6 +680,7 @@ def start_my_app():
                 align-items: center;
                 justify-content: center;
                 font-size: 12px;
+                z-index: 2;
             }
             
             .progress-container {
@@ -755,6 +784,138 @@ def start_my_app():
                 margin-bottom: 12px;
             }
             
+            .bulk-images-preview {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+                gap: 8px;
+                margin-top: 8px;
+            }
+            
+            .bulk-preview-box {
+                position: relative;
+                aspect-ratio: 1;
+                border-radius: 4px;
+                overflow: hidden;
+                border: 1px solid var(--gray-light);
+            }
+            
+            .bulk-preview-img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+            }
+            
+            .banner-preview-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+                gap: 16px;
+                margin-top: 16px;
+            }
+            
+            .banner-preview-box {
+                position: relative;
+                border-radius: 8px;
+                overflow: hidden;
+                border: 1px solid var(--gray-light);
+                background: white;
+            }
+            
+            .banner-preview-img {
+                width: 100%;
+                height: 150px;
+                object-fit: cover;
+            }
+            
+            .banner-link {
+                padding: 10px;
+                font-size: 12px;
+                color: var(--gray);
+                word-break: break-all;
+                background: var(--light);
+                border-top: 1px solid var(--gray-light);
+            }
+            
+            /* Responsive Quick Actions */
+            .quick-actions {
+                display: flex;
+                gap: 12px;
+                flex-wrap: wrap;
+            }
+            
+            .quick-actions .btn {
+                flex: 1;
+                min-width: 150px;
+                max-width: 250px;
+            }
+            
+            /* FLOATING ADD BUTTON FOR BULK UPLOAD */
+            .floating-add-btn {
+                position: fixed;
+                bottom: 30px;
+                right: 30px;
+                width: 60px;
+                height: 60px;
+                border-radius: 50%;
+                background: var(--primary);
+                color: white;
+                border: none;
+                box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+                font-size: 24px;
+                cursor: pointer;
+                z-index: 1000;
+                display: none;
+                align-items: center;
+                justify-content: center;
+                transition: all 0.3s ease;
+            }
+            
+            .floating-add-btn:hover {
+                background: var(--primary-dark);
+                transform: scale(1.05);
+                box-shadow: 0 6px 16px rgba(37, 99, 235, 0.4);
+            }
+            
+            .floating-add-btn:active {
+                transform: scale(0.95);
+            }
+            
+            .floating-add-btn.visible {
+                display: flex;
+            }
+            
+            @media (max-width: 768px) {
+                .quick-actions .btn {
+                    min-width: 100%;
+                }
+                
+                .floating-add-btn {
+                    bottom: 20px;
+                    right: 20px;
+                    width: 56px;
+                    height: 56px;
+                    font-size: 20px;
+                }
+            }
+            
+            /* Multiple selection styles */
+            .select-checkbox {
+                width: 18px;
+                height: 18px;
+                cursor: pointer;
+            }
+            
+            .delete-selected-btn {
+                background: var(--danger);
+                color: white;
+                display: none;
+                align-items: center;
+                gap: 8px;
+            }
+            
+            .delete-selected-btn.show {
+                display: inline-flex;
+            }
+            
             @media (max-width: 1200px) {
                 .sidebar {
                     width: 70px;
@@ -785,12 +946,85 @@ def start_my_app():
                 .card {
                     padding: 16px;
                 }
+                
+                .header {
+                    flex-direction: column;
+                    align-items: flex-start;
+                    gap: 12px;
+                }
+                
+                .page-title {
+                    font-size: 20px;
+                }
+            }
+            
+            /* Loading animation for deletion */
+            .deleting-overlay {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.7);
+                display: none;
+                justify-content: center;
+                align-items: center;
+                z-index: 9999;
+                flex-direction: column;
+            }
+            
+            .deleting-overlay.active {
+                display: flex;
+            }
+            
+            .deleting-content {
+                background: white;
+                padding: 30px;
+                border-radius: 12px;
+                text-align: center;
+                max-width: 400px;
+                width: 90%;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            }
+            
+            .deleting-spinner {
+                width: 60px;
+                height: 60px;
+                border: 4px solid #f3f3f3;
+                border-top: 4px solid #ef4444;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+                margin: 0 auto 20px;
+            }
+            
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
             }
         </style>
     </head>
     <body>
 
-        <div class="sidebar">
+        <!-- Deleting Overlay -->
+        <div class="deleting-overlay" id="deletingOverlay">
+            <div class="deleting-content">
+                <div class="deleting-spinner"></div>
+                <h3 style="margin-bottom: 10px; color: #111827;" id="deletingTitle">Deleting...</h3>
+                <p style="color: #6b7280; margin-bottom: 20px;" id="deletingMessage">Please wait while we delete the selected items</p>
+                <div class="progress-bar" style="background: #e5e7eb;">
+                    <div class="progress-fill" id="deletingProgress" style="background: #ef4444;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Floating Add Button for Bulk Upload -->
+        <button class="floating-add-btn" id="floatingAddBtn" title="Add New Product Row">
+            <i class="fas fa-plus"></i>
+        </button>
+
+        <div class="overlay" onclick="toggleSidebar()"></div>
+
+        <div class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <div class="brand">
                     <div class="brand-icon">
@@ -820,6 +1054,10 @@ def start_my_app():
                 <a href="#" class="nav-item" onclick="nav('manage-products', this)">
                     <i class="fas fa-box"></i>
                     <span class="nav-text">Products</span>
+                </a>
+                <a href="#" class="nav-item" onclick="nav('banners', this)">
+                    <i class="fas fa-image"></i>
+                    <span class="nav-text">Banners</span>
                 </a>
             </div>
             
@@ -872,12 +1110,18 @@ def start_my_app():
                 
                 <div class="card">
                     <h3 class="card-title">Quick Actions</h3>
-                    <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                    <div class="quick-actions">
                         <button class="btn btn-primary" onclick="nav('add-product', document.querySelectorAll('.nav-item')[1])">
                             <i class="fas fa-plus"></i> Add Product
                         </button>
                         <button class="btn btn-secondary" onclick="nav('bulk-upload', document.querySelectorAll('.nav-item')[2])">
                             <i class="fas fa-upload"></i> Bulk Upload
+                        </button>
+                        <button class="btn btn-success" onclick="nav('categories', document.querySelectorAll('.nav-item')[3])">
+                            <i class="fas fa-tags"></i> Manage Categories
+                        </button>
+                        <button class="btn btn-secondary" onclick="nav('banners', document.querySelectorAll('.nav-item')[5])">
+                            <i class="fas fa-image"></i> Manage Banners
                         </button>
                     </div>
                 </div>
@@ -987,7 +1231,7 @@ def start_my_app():
                         <div id="bulkBody"></div>
                     </div>
                     
-                    <div style="text-align: center;">
+                    <div id="bulkUploadButton" style="text-align: center; display: none;">
                         <button class="btn btn-primary" onclick="processBulk()" style="padding: 12px 32px;">
                             <i class="fas fa-play"></i> Start Upload
                         </button>
@@ -1016,7 +1260,12 @@ def start_my_app():
 
             <div id="manage-products" class="section" style="display:none;">
                 <div class="header">
-                    <h1 class="page-title">Products</h1>
+                    <div>
+                        <h1 class="page-title">Products</h1>
+                        <button class="btn btn-danger delete-selected-btn" id="deleteSelectedBtn" onclick="deleteSelectedProducts()">
+                            <i class="fas fa-trash"></i> Delete Selected
+                        </button>
+                    </div>
                     <div style="display: flex; gap: 8px;">
                         <input type="text" id="searchInput" class="form-control" placeholder="Search products..." style="width: 200px;">
                         <button class="btn btn-secondary" onclick="searchProducts()">
@@ -1030,6 +1279,9 @@ def start_my_app():
                         <table class="table">
                             <thead>
                                 <tr>
+                                    <th style="width: 40px;">
+                                        <input type="checkbox" id="selectAllCheckbox" class="select-checkbox" onchange="toggleSelectAll(this)">
+                                    </th>
                                     <th>Image</th>
                                     <th>Product Details</th>
                                     <th>Category</th>
@@ -1042,6 +1294,50 @@ def start_my_app():
                     </div>
                 </div>
             </div>
+
+            <div id="banners" class="section" style="display:none;">
+                <div class="header">
+                    <h1 class="page-title">Banner Management</h1>
+                </div>
+                
+                <div class="card">
+                    <h3 class="card-title" style="margin-bottom: 16px;">Add New Banner</h3>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Banner Image *</label>
+                        <div class="image-upload-container" onclick="document.getElementById('bannerFile').click()">
+                            <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                            <p style="color: var(--gray); margin-bottom: 8px;">Click to upload banner image</p>
+                            <p style="font-size: 13px; color: var(--gray);">Recommended size: 1200x400px</p>
+                        </div>
+                        <input type="file" id="bannerFile" accept="image/*" style="display:none" onchange="previewBannerImage()">
+                        
+                        <div id="bannerPreviewContainer" style="display: none; margin-top: 16px;">
+                            <p style="font-size: 14px; font-weight: 600; margin-bottom: 8px; color: var(--dark);">
+                                Banner Preview
+                            </p>
+                            <div id="bannerPreview" class="preview-grid" style="grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));"></div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Banner Link (Optional)</label>
+                        <input type="text" id="bannerLink" class="form-control" placeholder="https://example.com/offer">
+                        <p style="font-size: 12px; color: var(--gray); margin-top: 4px;">Leave empty if banner shouldn't be clickable</p>
+                    </div>
+                    
+                    <button class="btn btn-primary" onclick="uploadBanner()" style="width: 100%; padding: 12px;">
+                        <i class="fas fa-upload"></i> Upload Banner
+                    </button>
+                </div>
+                
+                <div class="card">
+                    <h3 class="card-title" style="margin-bottom: 16px;">Existing Banners</h3>
+                    <div id="bannersList" style="color: var(--gray); font-size: 14px;">
+                        Loading banners...
+                    </div>
+                </div>
+            </div>
         </div>
 
     <script>
@@ -1049,8 +1345,15 @@ def start_my_app():
         let editingProductImages = []; // Stores existing image URLs
         let newProductImages = []; // Stores new image base64 strings
         let removedExistingImages = []; // Track removed existing images
+        let banners = []; // Store banners data
+        let bulkRowImagePreviews = {}; // Store bulk row image previews
+        let selectedProducts = new Set(); // Store selected product indices
 
-        window.onload = loadData;
+        window.onload = function() {
+            loadData();
+            // Setup floating button click handler
+            document.getElementById('floatingAddBtn').onclick = addBulkRow;
+        };
 
         async function loadData() {
             try {
@@ -1058,7 +1361,8 @@ def start_my_app():
                 const data = await res.json();
                 products = data.products || [];
                 filteredProducts = [...products];
-                categories = data.categories || ["General"];
+                categories = data.categories || [];
+                banners = data.banners || [];
                 updateUI();
             } catch (error) {
                 console.error('Failed to load data:', error);
@@ -1096,6 +1400,7 @@ def start_my_app():
                 `).join('');
             }
 
+            renderBannersList();
             renderProductTable();
         }
 
@@ -1114,7 +1419,7 @@ def start_my_app():
             if (itemsToRender.length === 0) {
                 container.innerHTML = `
                     <tr>
-                        <td colspan="5" style="text-align: center; padding: 40px; color: var(--gray);">
+                        <td colspan="6" style="text-align: center; padding: 40px; color: var(--gray);">
                             <i class="fas fa-box-open" style="font-size: 36px; margin-bottom: 12px; display: block; opacity: 0.3;"></i>
                             No products found
                         </td>
@@ -1125,12 +1430,20 @@ def start_my_app():
             
             container.innerHTML = itemsToRender.map((p, i) => {
                 const originalIndex = products.findIndex(prod => prod.id === p.id);
+                const isSelected = selectedProducts.has(originalIndex);
                 return `
                     <tr>
                         <td>
+                            <input type="checkbox" class="select-checkbox" 
+                                   data-index="${originalIndex}"
+                                   onchange="toggleProductSelection(${originalIndex}, this)"
+                                   ${isSelected ? 'checked' : ''}>
+                        </td>
+                        <td>
                             <img src="${p.image || p.images?.[0] || 'https://via.placeholder.com/50'}" 
                                 class="product-img" 
-                                alt="${p.title}">
+                                alt="${p.title}"
+                                onerror="this.src='https://via.placeholder.com/50'">
                         </td>
                         <td>
                             <div style="font-weight: 600; margin-bottom: 4px;">${p.title || 'No title'}</div>
@@ -1144,7 +1457,7 @@ def start_my_app():
                             </span>
                         </td>
                         <td>
-                            <div style="font-weight: 700; color: var(--dark);">$${parseFloat(p.price || 0).toFixed(2)}</div>
+                            <div style="font-weight: 700; color: var(--dark);">₹${parseFloat(p.price || 0).toFixed(2)}</div>
                             ${p.offer ? `<div style="font-size: 12px; color: var(--secondary);">${p.offer}% off</div>` : ''}
                         </td>
                         <td>
@@ -1160,6 +1473,261 @@ def start_my_app():
                     </tr>
                 `;
             }).join('');
+            
+            updateDeleteSelectedButton();
+        }
+
+        // --- MULTIPLE SELECTION FUNCTIONS ---
+        function toggleProductSelection(index, checkbox) {
+            if (checkbox.checked) {
+                selectedProducts.add(index);
+            } else {
+                selectedProducts.delete(index);
+                document.getElementById('selectAllCheckbox').checked = false;
+            }
+            updateDeleteSelectedButton();
+        }
+
+        function toggleSelectAll(checkbox) {
+            const allCheckboxes = document.querySelectorAll('.select-checkbox');
+            const container = document.getElementById('inventoryContainer');
+            
+            if (checkbox.checked) {
+                // Select all visible products
+                filteredProducts.forEach((p, i) => {
+                    const originalIndex = products.findIndex(prod => prod.id === p.id);
+                    if (originalIndex !== -1) {
+                        selectedProducts.add(originalIndex);
+                    }
+                });
+                allCheckboxes.forEach(cb => cb.checked = true);
+            } else {
+                // Deselect all
+                selectedProducts.clear();
+                allCheckboxes.forEach(cb => cb.checked = false);
+            }
+            updateDeleteSelectedButton();
+        }
+
+        function updateDeleteSelectedButton() {
+            const deleteBtn = document.getElementById('deleteSelectedBtn');
+            if (selectedProducts.size > 0) {
+                deleteBtn.classList.add('show');
+                deleteBtn.innerHTML = `<i class="fas fa-trash"></i> Delete Selected (${selectedProducts.size})`;
+            } else {
+                deleteBtn.classList.remove('show');
+            }
+        }
+
+        // --- DELETION FUNCTIONS WITH LOADING ---
+        async function showDeletingOverlay(title, message) {
+            const overlay = document.getElementById('deletingOverlay');
+            const progressBar = document.getElementById('deletingProgress');
+            
+            document.getElementById('deletingTitle').textContent = title;
+            document.getElementById('deletingMessage').textContent = message;
+            progressBar.style.width = '0%';
+            
+            overlay.classList.add('active');
+            
+            // Disable body scroll
+            document.body.style.overflow = 'hidden';
+        }
+
+        async function hideDeletingOverlay() {
+            const overlay = document.getElementById('deletingOverlay');
+            const progressBar = document.getElementById('deletingProgress');
+            
+            // Complete the progress bar
+            progressBar.style.width = '100%';
+            
+            // Wait for animation to complete
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            overlay.classList.remove('active');
+            document.body.style.overflow = 'auto';
+        }
+
+        async function updateDeletionProgress(progress) {
+            const progressBar = document.getElementById('deletingProgress');
+            progressBar.style.width = `${progress}%`;
+        }
+
+        async function deleteSelectedProducts() {
+            if (selectedProducts.size === 0) return;
+            
+            const { value: confirm } = await Swal.fire({
+                title: `Delete ${selectedProducts.size} Products?`,
+                text: 'This action cannot be undone. All product images will also be deleted.',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'Delete',
+                cancelButtonText: 'Cancel',
+                confirmButtonColor: '#ef4444'
+            });
+            
+            if (!confirm) return;
+            
+            const indices = Array.from(selectedProducts);
+            
+            // Show deleting overlay
+            await showDeletingOverlay('Deleting Products', `Deleting ${indices.length} products...`);
+            
+            try {
+                // Sort indices in descending order to avoid index shifting
+                indices.sort((a, b) => b - a);
+                
+                const total = indices.length;
+                let completed = 0;
+                
+                for (const index of indices) {
+                    await updateDeletionProgress(Math.round((completed / total) * 100));
+                    
+                    const res = await fetch('/api/delete', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({index: index})
+                    });
+                    
+                    if (!res.ok) {
+                        throw new Error('Failed to delete product');
+                    }
+                    
+                    completed++;
+                    await updateDeletionProgress(Math.round((completed / total) * 100));
+                    
+                    // Small delay between deletions
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                }
+                
+                // Update UI
+                selectedProducts.clear();
+                await loadData();
+                
+                // Show success message
+                await hideDeletingOverlay();
+                
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Deleted Successfully!',
+                    text: `${total} products have been deleted.`,
+                    timer: 2000,
+                    showConfirmButton: false
+                });
+                
+            } catch (error) {
+                console.error('Delete multiple error:', error);
+                await hideDeletingOverlay();
+                Swal.fire('Error', 'Failed to delete products', 'error');
+            }
+        }
+
+        async function deleteProduct(index) {
+            const { value: confirm } = await Swal.fire({
+                title: 'Delete Product?',
+                text: 'This action cannot be undone. All product images will also be deleted.',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'Delete',
+                cancelButtonText: 'Cancel',
+                confirmButtonColor: '#ef4444'
+            });
+            
+            if (!confirm) return;
+            
+            // Show deleting overlay
+            await showDeletingOverlay('Deleting Product', 'Deleting product and associated images...');
+            
+            try {
+                await updateDeletionProgress(30);
+                
+                const res = await fetch('/api/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({index: index})
+                });
+                
+                await updateDeletionProgress(70);
+                
+                if (!res.ok) {
+                    throw new Error('Delete failed');
+                }
+                
+                // Remove from selected products if present
+                selectedProducts.delete(index);
+                
+                await updateDeletionProgress(100);
+                await loadData();
+                
+                // Hide overlay and show success
+                await hideDeletingOverlay();
+                
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Deleted Successfully!',
+                    text: 'Product has been deleted.',
+                    timer: 1500,
+                    showConfirmButton: false
+                });
+                
+            } catch (error) {
+                console.error('Delete error:', error);
+                await hideDeletingOverlay();
+                Swal.fire('Error', 'Failed to delete product', 'error');
+            }
+        }
+
+        async function deleteBanner(index) {
+            const { value: confirm } = await Swal.fire({
+                title: 'Delete Banner?',
+                text: 'This banner will be removed from the homepage',
+                icon: 'warning',
+                showCancelButton: true,
+                showCancelButton: true,
+                confirmButtonText: 'Delete',
+                cancelButtonText: 'Cancel',
+                confirmButtonColor: '#ef4444'
+            });
+            
+            if (!confirm) return;
+            
+            // Show deleting overlay
+            await showDeletingOverlay('Deleting Banner', 'Deleting banner image...');
+            
+            try {
+                await updateDeletionProgress(30);
+                
+                const res = await fetch('/api/delete-banner', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({index: index})
+                });
+                
+                await updateDeletionProgress(70);
+                
+                if (!res.ok) {
+                    throw new Error('Delete failed');
+                }
+                
+                await updateDeletionProgress(100);
+                await loadData();
+                
+                // Hide overlay and show success
+                await hideDeletingOverlay();
+                
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Deleted Successfully!',
+                    text: 'Banner has been deleted.',
+                    timer: 1500,
+                    showConfirmButton: false
+                });
+                
+            } catch (error) {
+                console.error('Delete banner error:', error);
+                await hideDeletingOverlay();
+                Swal.fire('Error', 'Failed to delete banner', 'error');
+            }
         }
 
         // --- IMAGE FUNCTIONS ---
@@ -1240,7 +1808,7 @@ def start_my_app():
                 const div = document.createElement('div');
                 div.className = 'preview-box';
                 div.innerHTML = `
-                    <img src="${img}" class="preview-img" alt="Existing image ${i + 1}">
+                    <img src="${img}" class="preview-img" alt="Existing image ${i + 1}" onerror="this.src='https://via.placeholder.com/80'">
                     <button class="remove-btn" onclick="removeExistingImage(${i})">
                         <i class="fas fa-times"></i>
                     </button>
@@ -1264,6 +1832,7 @@ def start_my_app():
             const price = document.getElementById('pPrice').value.trim();
             const category = document.getElementById('pCategory').value;
             const link = document.getElementById('pLink').value.trim();
+            const description = document.getElementById('pDesc').value.trim();
             const editIndex = parseInt(document.getElementById('editIndex').value);
             const files = document.getElementById('pFiles').files;
             
@@ -1300,17 +1869,17 @@ def start_my_app():
                 // For new: just new images
                 const payload = {
                     editIndex: editIndex,
-                    products: [{
+                    product: {
                         title: title,
                         price: parseFloat(price),
                         category: category,
                         offer: parseInt(document.getElementById('pOffer').value) || 0,
-                        desc: document.getElementById('pDesc').value.trim(),
+                        description: description,
                         link: link,
                         existingImages: editingProductImages, // Keep these as-is
                         newImages: newProductImages, // Upload these as new
                         removedImages: removedExistingImages // Track removed for backend cleanup
-                    }]
+                    }
                 };
                 
                 progressBar.style.width = '50%';
@@ -1433,7 +2002,7 @@ def start_my_app():
             row.innerHTML = `
                 <div class="bulk-row-header">
                     <div style="font-weight: 600; color: var(--dark);">Product #${document.querySelectorAll('.bulk-row').length + 1}</div>
-                    <button onclick="this.closest('.bulk-row').remove()" style="background: none; border: none; color: var(--danger); cursor: pointer;">
+                    <button onclick="removeBulkRow('${id}')" style="background: none; border: none; color: var(--danger); cursor: pointer;">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
@@ -1450,15 +2019,20 @@ def start_my_app():
                 </div>
                 
                 <div class="form-group">
-                    <label class="form-label">Images</label>
-                    <input type="file" id="bulk-files-${id}" class="form-control" multiple accept="image/*">
+                    <label class="form-label">Images *</label>
+                    <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+                        <input type="file" id="bulk-files-${id}" class="form-control" multiple accept="image/*" onchange="previewBulkImages('${id}', this)" style="flex: 1;">
+                        <button class="btn btn-secondary" onclick="clearBulkImages('${id}')" style="padding: 8px 12px;">
+                            <i class="fas fa-times"></i> Clear
+                        </button>
+                    </div>
+                    <div id="bulk-preview-${id}" class="bulk-images-preview"></div>
                 </div>
                 
                 <div class="form-grid">
                     <div class="form-group">
                         <label class="form-label">Category</label>
                         <select id="bulk-category-${id}" class="form-control">
-                            <option value="General">General</option>
                             ${categories.map(c => `<option value="${c}">${c}</option>`).join('')}
                         </select>
                     </div>
@@ -1480,12 +2054,152 @@ def start_my_app():
             `;
             
             document.getElementById('bulkBody').appendChild(row);
+            bulkRowImagePreviews[id] = [];
+            updateBulkUploadButton();
+            
+            // Scroll to the newly added row
+            setTimeout(() => {
+                row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }, 100);
+        }
+
+        function removeBulkRow(id) {
+            const row = document.getElementById(`bulk-row-${id}`);
+            if (row) {
+                row.remove();
+                delete bulkRowImagePreviews[id];
+                updateBulkUploadButton();
+                updateRowNumbers();
+            }
+        }
+
+        function updateRowNumbers() {
+            const rows = document.querySelectorAll('.bulk-row');
+            rows.forEach((row, index) => {
+                const header = row.querySelector('.bulk-row-header div');
+                if (header) {
+                    header.textContent = `Product #${index + 1}`;
+                }
+            });
+        }
+
+        function updateBulkUploadButton() {
+            const rows = document.querySelectorAll('.bulk-row');
+            const uploadButton = document.getElementById('bulkUploadButton');
+            
+            if (rows.length > 0) {
+                uploadButton.style.display = 'block';
+            } else {
+                uploadButton.style.display = 'none';
+            }
+        }
+
+        function previewBulkImages(rowId, inputElement) {
+            const files = inputElement.files;
+            const preview = document.getElementById(`bulk-preview-${rowId}`);
+            
+            if (!files || files.length === 0) {
+                return;
+            }
+            
+            // Clear existing preview
+            preview.innerHTML = '';
+            
+            // Clear existing images array for this row
+            bulkRowImagePreviews[rowId] = [];
+            
+            Array.from(files).forEach((file, index) => {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const div = document.createElement('div');
+                    div.className = 'bulk-preview-box';
+                    div.innerHTML = `
+                        <img src="${e.target.result}" class="bulk-preview-img" alt="Image ${index + 1}">
+                        <button class="remove-btn" onclick="removeBulkImage('${rowId}', ${index})" style="top: 2px; right: 2px; width: 20px; height: 20px; font-size: 10px;">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    `;
+                    preview.appendChild(div);
+                    
+                    // Store base64 data
+                    bulkRowImagePreviews[rowId].push(e.target.result.split(',')[1]);
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function clearBulkImages(rowId) {
+            const input = document.getElementById(`bulk-files-${rowId}`);
+            const preview = document.getElementById(`bulk-preview-${rowId}`);
+            
+            // Clear file input
+            input.value = '';
+            
+            // Clear preview
+            preview.innerHTML = '';
+            
+            // Clear stored images
+            bulkRowImagePreviews[rowId] = [];
+        }
+
+        function removeBulkImage(rowId, index) {
+            // Remove image from array
+            if (bulkRowImagePreviews[rowId] && bulkRowImagePreviews[rowId].length > index) {
+                bulkRowImagePreviews[rowId].splice(index, 1);
+                
+                // Update preview
+                const preview = document.getElementById(`bulk-preview-${rowId}`);
+                preview.innerHTML = '';
+                
+                // Recreate preview with remaining images
+                bulkRowImagePreviews[rowId].forEach((imgBase64, i) => {
+                    const div = document.createElement('div');
+                    div.className = 'bulk-preview-box';
+                    div.innerHTML = `
+                        <img src="data:image/webp;base64,${imgBase64}" class="bulk-preview-img" alt="Image ${i + 1}">
+                        <button class="remove-btn" onclick="removeBulkImage('${rowId}', ${i})" style="top: 2px; right: 2px; width: 20px; height: 20px; font-size: 10px;">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    `;
+                    preview.appendChild(div);
+                });
+                
+                // Update file input (we need to create a new FileList)
+                // For simplicity, we'll just clear the file input
+                const input = document.getElementById(`bulk-files-${rowId}`);
+                input.value = '';
+            }
         }
 
         async function processBulk() {
             const rows = document.querySelectorAll('.bulk-row');
             if (rows.length === 0) {
                 Swal.fire('No Products', 'Add at least one product row', 'warning');
+                return;
+            }
+            
+            // Validate all rows
+            let isValid = true;
+            let errorMessage = '';
+            
+            rows.forEach(row => {
+                const id = row.id.split('-')[2];
+                const title = document.getElementById(`bulk-title-${id}`).value.trim();
+                const price = document.getElementById(`bulk-price-${id}`).value.trim();
+                
+                if (!title || !price) {
+                    isValid = false;
+                    errorMessage = 'Each product must have a title and price';
+                }
+                
+                if (!bulkRowImagePreviews[id] || bulkRowImagePreviews[id].length === 0) {
+                    isValid = false;
+                    errorMessage = `Product "${title || 'unnamed'}" must have at least one image`;
+                }
+            });
+            
+            if (!isValid) {
+                Swal.fire('Validation Error', errorMessage, 'error');
                 return;
             }
             
@@ -1499,72 +2213,178 @@ def start_my_app():
             
             if (!confirm) return;
             
-            Swal.fire({
-                title: 'Processing...',
-                html: 'Uploading products to GitHub',
-                allowOutsideClick: false,
-                didOpen: () => {
-                    Swal.showLoading();
-                }
-            });
+            // Show uploading overlay
+            await showDeletingOverlay('Uploading Products', `Uploading ${rows.length} products...`);
             
             try {
+                let completed = 0;
+                const total = rows.length;
+                
                 for (let row of rows) {
                     const id = row.id.split('-')[2];
                     const title = document.getElementById(`bulk-title-${id}`).value.trim();
                     const price = document.getElementById(`bulk-price-${id}`).value.trim();
-                    const files = document.getElementById(`bulk-files-${id}`).files;
-                    
-                    if (!title || !price) {
-                        Swal.fire('Error', 'Each product must have a title and price', 'error');
-                        return;
-                    }
-                    
-                    let images = [];
-                    if (files.length > 0) {
-                        for (let file of files) {
-                            const base64 = await getBase64(file);
-                            images.push(base64);
-                        }
-                    }
+                    const description = document.getElementById(`bulk-desc-${id}`).value.trim();
                     
                     const payload = {
                         editIndex: -1,
-                        products: [{
+                        product: {
                             title: title,
                             price: parseFloat(price),
                             category: document.getElementById(`bulk-category-${id}`).value,
                             offer: parseInt(document.getElementById(`bulk-offer-${id}`).value) || 0,
-                            desc: document.getElementById(`bulk-desc-${id}`).value.trim(),
+                            description: description,
                             link: document.getElementById(`bulk-link-${id}`).value.trim(),
-                            existingImages: [], // No existing images for new products
-                            newImages: images,
+                            existingImages: [],
+                            newImages: bulkRowImagePreviews[id],
                             removedImages: []
-                        }]
+                        }
                     };
                     
-                    await fetch('/api/upload', {
+                    const res = await fetch('/api/upload-bulk', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify(payload)
                     });
                     
+                    if (!res.ok) {
+                        throw new Error('Failed to upload product');
+                    }
+                    
+                    completed++;
+                    await updateDeletionProgress(Math.round((completed / total) * 100));
+                    
                     await new Promise(resolve => setTimeout(resolve, 500));
                 }
+                
+                // Hide overlay and show success
+                await hideDeletingOverlay();
                 
                 Swal.fire({
                     icon: 'success',
                     title: 'Bulk Upload Complete!',
+                    text: `${total} products have been uploaded successfully.`,
                     timer: 2000,
                     showConfirmButton: false
                 });
                 
                 document.getElementById('bulkBody').innerHTML = '';
+                bulkRowImagePreviews = {};
+                updateBulkUploadButton();
                 loadData();
                 
             } catch (error) {
+                await hideDeletingOverlay();
                 Swal.fire('Upload Failed', 'Failed to upload products', 'error');
             }
+        }
+
+        // --- BANNER FUNCTIONS ---
+        function previewBannerImage() {
+            const file = document.getElementById('bannerFile').files[0];
+            const preview = document.getElementById('bannerPreview');
+            const container = document.getElementById('bannerPreviewContainer');
+            
+            if (!file) {
+                container.style.display = 'none';
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                preview.innerHTML = '';
+                const div = document.createElement('div');
+                div.className = 'preview-box';
+                div.innerHTML = `
+                    <img src="${e.target.result}" class="preview-img" alt="Banner Preview">
+                `;
+                preview.appendChild(div);
+                container.style.display = 'block';
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function uploadBanner() {
+            const file = document.getElementById('bannerFile').files[0];
+            const link = document.getElementById('bannerLink').value.trim();
+            
+            if (!file) {
+                Swal.fire('Missing Image', 'Please select a banner image', 'error');
+                return;
+            }
+            
+            // Show uploading overlay
+            await showDeletingOverlay('Uploading Banner', 'Uploading banner image...');
+            
+            try {
+                const base64Image = await getBase64(file);
+                
+                const payload = {
+                    image: base64Image,
+                    link: link
+                };
+                
+                await updateDeletionProgress(30);
+                
+                const res = await fetch('/api/upload-banner', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                
+                await updateDeletionProgress(70);
+                
+                const result = await res.json();
+                
+                if (result.success) {
+                    await updateDeletionProgress(100);
+                    await hideDeletingOverlay();
+                    
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'Banner Uploaded!',
+                        timer: 1500,
+                        showConfirmButton: false
+                    });
+                    
+                    // Clear form
+                    document.getElementById('bannerFile').value = '';
+                    document.getElementById('bannerLink').value = '';
+                    document.getElementById('bannerPreviewContainer').style.display = 'none';
+                    
+                    loadData();
+                } else {
+                    throw new Error('Upload failed');
+                }
+                
+            } catch (error) {
+                console.error('Banner upload error:', error);
+                await hideDeletingOverlay();
+                Swal.fire('Upload Failed', 'Failed to upload banner', 'error');
+            }
+        }
+
+        function renderBannersList() {
+            const container = document.getElementById('bannersList');
+            
+            if (!banners || banners.length === 0) {
+                container.innerHTML = '<p style="color: var(--gray);">No banners added yet.</p>';
+                return;
+            }
+            
+            container.innerHTML = `
+                <div class="banner-preview-grid">
+                    ${banners.map((banner, index) => `
+                        <div class="banner-preview-box">
+                            <img src="${banner.image}" class="banner-preview-img" alt="Banner ${index + 1}" onerror="this.src='https://via.placeholder.com/300x150'">
+                            ${banner.link ? `<div class="banner-link">Link: ${banner.link}</div>` : ''}
+                            <button class="remove-btn" onclick="deleteBanner(${index})" style="top: 8px; right: 8px;">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
         }
 
         // --- CATEGORY MANAGEMENT ---
@@ -1582,9 +2402,15 @@ def start_my_app():
                 return;
             }
             
-            categories.push(val);
+            // Show loading
+            const btn = document.querySelector('#categories .btn-primary');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<span class="loader"></span> Adding...';
+            btn.disabled = true;
             
             try {
+                categories.push(val);
+                
                 await fetch('/api/update-cats', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -1593,10 +2419,16 @@ def start_my_app():
                 
                 input.value = '';
                 updateUI();
+                
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                
                 Swal.fire('Success', 'Category added', 'success');
             } catch (error) {
-                Swal.fire('Error', 'Failed to add category', 'error');
                 categories.pop();
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                Swal.fire('Error', 'Failed to add category', 'error');
             }
         }
 
@@ -1611,50 +2443,24 @@ def start_my_app():
             
             if (!confirm) return;
             
-            categories.splice(index, 1);
+            // Show loading
+            await showDeletingOverlay('Deleting Category', 'Removing category from system...');
             
             try {
+                categories.splice(index, 1);
+                
                 await fetch('/api/update-cats', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({categories: categories})
                 });
                 
+                await hideDeletingOverlay();
                 updateUI();
                 Swal.fire('Deleted', 'Category removed', 'success');
             } catch (error) {
+                await hideDeletingOverlay();
                 Swal.fire('Error', 'Failed to delete category', 'error');
-            }
-        }
-
-        // --- PRODUCT MANAGEMENT ---
-        async function deleteProduct(index) {
-            const { value: confirm } = await Swal.fire({
-                title: 'Delete Product?',
-                text: 'This action cannot be undone',
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonText: 'Delete',
-                cancelButtonText: 'Cancel'
-            });
-            
-            if (!confirm) return;
-            
-            try {
-                const res = await fetch('/api/delete', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({index: index})
-                });
-                
-                if (res.ok) {
-                    Swal.fire('Deleted', 'Product removed successfully', 'success');
-                    loadData();
-                } else {
-                    throw new Error('Delete failed');
-                }
-            } catch (error) {
-                Swal.fire('Error', 'Failed to delete product', 'error');
             }
         }
 
@@ -1669,6 +2475,20 @@ def start_my_app():
             document.getElementById(id).style.display = 'block';
             document.querySelectorAll('.nav-item').forEach(m => m.classList.remove('active'));
             if (el) el.classList.add('active');
+            
+            // Show/hide floating button based on active section
+            const floatingBtn = document.getElementById('floatingAddBtn');
+            if (id === 'bulk-upload') {
+                floatingBtn.classList.add('visible');
+            } else {
+                floatingBtn.classList.remove('visible');
+            }
+            
+            // Clear selections when leaving product management
+            if (id !== 'manage-products') {
+                selectedProducts.clear();
+                updateDeleteSelectedButton();
+            }
         }
 
         async function logout() {
@@ -1747,10 +2567,30 @@ def start_my_app():
             if method == "PUT":
                 return requests.put(url, headers=headers, json=data, timeout=30)
             if method == "DELETE":
-                return requests.delete(url, headers=headers, timeout=30)
+                return requests.delete(url, headers=headers, json=data, timeout=30)
         except Exception as e:
             logger.error(f"GitHub API error: {e}")
             return None
+
+    def delete_file_from_github(path, token, repo):
+        """Delete a file from GitHub repository"""
+        try:
+            # First get the file's SHA
+            res = github_api("GET", f"{repo}/contents/{path}", token)
+            if res and res.status_code == 200:
+                sha = res.json()['sha']
+                # Delete the file
+                delete_res = github_api("DELETE", f"{repo}/contents/{path}", token, {
+                    "message": f"Delete file: {path}",
+                    "sha": sha
+                })
+                if delete_res and delete_res.status_code in [200, 204]:
+                    logger.info(f"Deleted file: {path}")
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"Error deleting file {path}: {e}")
+            return False
 
     @flask_app.route('/')
     def home():
@@ -1794,6 +2634,7 @@ def start_my_app():
             with open(CONFIG_FILE, 'r') as f: 
                 conf = json.load(f)
             
+            # Get products
             prods = []
             res_p = github_api("GET", f"{conf['repo']}/contents/all_products.json", conf['token'])
             if res_p and res_p.status_code == 200:
@@ -1804,19 +2645,31 @@ def start_my_app():
                     logger.error(f"Error parsing products: {e}")
                     prods = []
             
-            cats = ["General"]
+            # Get categories
+            cats = []
             res_s = github_api("GET", f"{conf['repo']}/contents/settings.json", conf['token'])
             if res_s and res_s.status_code == 200:
                 try:
                     settings = json.loads(base64.b64decode(res_s.json()['content']).decode('utf-8'))
-                    cats = settings.get('categories', ["General"])
+                    cats = settings.get('categories', [])
                 except Exception as e:
                     logger.error(f"Error parsing categories: {e}")
             
-            return jsonify({"products": prods, "categories": cats})
+            # Get banners
+            banner_list = []
+            res_b = github_api("GET", f"{conf['repo']}/contents/banners.json", conf['token'])
+            if res_b and res_b.status_code == 200:
+                try:
+                    banner_list = json.loads(base64.b64decode(res_b.json()['content']).decode('utf-8'))
+                    logger.info(f"Loaded {len(banner_list)} banners")
+                except Exception as e:
+                    logger.error(f"Error parsing banners: {e}")
+                    banner_list = []
+            
+            return jsonify({"products": prods, "categories": cats, "banners": banner_list})
         except Exception as e:
             logger.error(f"Get data error: {e}")
-            return jsonify({"products": [], "categories": ["General"]})
+            return jsonify({"products": [], "categories": [], "banners": []})
 
     @flask_app.route('/api/update-cats', methods=['POST'])
     def update_cats():
@@ -1828,7 +2681,14 @@ def start_my_app():
             res = github_api("GET", f"{conf['repo']}/contents/settings.json", conf['token'])
             sha = res.json()['sha'] if res and res.status_code == 200 else None
             
-            content = base64.b64encode(json.dumps(request.json, indent=2).encode('utf-8')).decode('utf-8')
+            # Update only categories in settings
+            if sha:
+                # Get existing settings first
+                existing_settings = json.loads(base64.b64decode(res.json()['content']).decode('utf-8'))
+                existing_settings['categories'] = request.json['categories']
+                content = base64.b64encode(json.dumps(existing_settings, indent=2).encode('utf-8')).decode('utf-8')
+            else:
+                content = base64.b64encode(json.dumps({"categories": request.json['categories']}, indent=2).encode('utf-8')).decode('utf-8')
             
             result = github_api("PUT", f"{conf['repo']}/contents/settings.json", conf['token'], {
                 "message": "Update categories",
@@ -1863,50 +2723,63 @@ def start_my_app():
                 prods = []
                 sha = None
 
-            for prod in data['products']:
-                ts = int(time.time()*1000)
-                
-                # Handle images properly
-                existing_images = prod.get('existingImages', [])
-                new_images_base64 = prod.get('newImages', [])
-                removed_images = prod.get('removedImages', [])
-                
-                # Upload new images and get their URLs
-                new_image_urls = []
-                for i, img_b64 in enumerate(new_images_base64):
-                    time.sleep(0.3)
-                    fname = f"images/p_{ts}_{i}.webp"
-                    upload_res = github_api("PUT", f"{conf['repo']}/contents/{fname}", conf['token'], {
-                        "message": "Upload product image",
-                        "content": img_b64
-                    })
-                    if upload_res and upload_res.status_code in [200, 201]:
-                        new_image_urls.append(f"https://raw.githubusercontent.com/{conf['repo']}/main/{fname}")
-                
-                # Combine existing images (excluding removed ones) with new images
-                # Filter out removed images from existing images
-                final_existing_images = [img for img in existing_images if img not in removed_images]
-                all_image_urls = final_existing_images + new_image_urls
-                
-                # Create product object
-                item = {
-                    "id": ts if edit_idx == -1 else prods[edit_idx].get('id', ts),
-                    "title": prod.get('title', ''),
-                    "price": prod.get('price', 0),
-                    "category": prod.get('category', 'General'),
-                    "offer": prod.get('offer', 0),
-                    "description": prod.get('desc', ''),
-                    "buyLink": prod.get('link', ''),
-                    "images": all_image_urls,
-                    "image": all_image_urls[0] if all_image_urls else ""
-                }
-                
-                if edit_idx > -1 and edit_idx < len(prods): 
-                    prods[edit_idx] = item
-                    logger.info(f"Updated product at index {edit_idx}")
-                else: 
-                    prods.insert(0, item)
-                    logger.info("Added new product")
+            prod = data['product']
+            ts = int(time.time()*1000)
+            
+            # Handle removed images - delete them from GitHub
+            removed_images = prod.get('removedImages', [])
+            for img_url in removed_images:
+                path = extract_image_path_from_url(img_url, conf['repo'])
+                if path:
+                    delete_file_from_github(path, conf['token'], conf['repo'])
+                    logger.info(f"Deleted image: {path}")
+            
+            # Handle existing images (not removed)
+            existing_images = prod.get('existingImages', [])
+            
+            # Handle new images
+            new_images_base64 = prod.get('newImages', [])
+            new_image_urls = []
+            
+            for i, img_b64 in enumerate(new_images_base64):
+                time.sleep(0.3)
+                # Generate consistent filename using title, description, timestamp
+                filename = generate_filename(
+                    prod.get('title', 'product'),
+                    prod.get('description', ''),
+                    ts,
+                    f"img_{i}"
+                )
+                fname = f"images/{filename}"
+                upload_res = github_api("PUT", f"{conf['repo']}/contents/{fname}", conf['token'], {
+                    "message": "Upload product image",
+                    "content": img_b64
+                })
+                if upload_res and upload_res.status_code in [200, 201]:
+                    new_image_urls.append(f"https://raw.githubusercontent.com/{conf['repo']}/main/{fname}")
+            
+            # Combine existing (non-removed) images with new images
+            all_image_urls = existing_images + new_image_urls
+            
+            # Create product object
+            item = {
+                "id": ts if edit_idx == -1 else prods[edit_idx].get('id', ts),
+                "title": prod.get('title', ''),
+                "price": prod.get('price', 0),
+                "category": prod.get('category', 'General'),
+                "offer": prod.get('offer', 0),
+                "description": prod.get('description', prod.get('desc', '')),
+                "buyLink": prod.get('link', ''),
+                "images": all_image_urls,
+                "image": all_image_urls[0] if all_image_urls else ""
+            }
+            
+            if edit_idx > -1 and edit_idx < len(prods): 
+                prods[edit_idx] = item
+                logger.info(f"Updated product at index {edit_idx}")
+            else: 
+                prods.insert(0, item)
+                logger.info("Added new product")
             
             # Update products file
             content = base64.b64encode(json.dumps(prods, indent=2).encode('utf-8')).decode('utf-8')
@@ -1922,6 +2795,185 @@ def start_my_app():
                 return jsonify({"success": False})
         except Exception as e:
             logger.error(f"Upload error: {e}")
+            return jsonify({"success": False, "error": str(e)})
+
+    @flask_app.route('/api/upload-bulk', methods=['POST'])
+    def upload_bulk():
+        logger.info("Bulk upload API called")
+        try:
+            with open(CONFIG_FILE, 'r') as f: 
+                conf = json.load(f)
+            
+            data = request.json
+            edit_idx = int(data.get('editIndex', -1))
+            
+            # Get existing products
+            res = github_api("GET", f"{conf['repo']}/contents/all_products.json", conf['token'])
+            if res and res.status_code == 200:
+                prods = json.loads(base64.b64decode(res.json()['content']).decode('utf-8'))
+                sha = res.json()['sha']
+            else:
+                prods = []
+                sha = None
+
+            prod = data['product']
+            ts = int(time.time()*1000)
+            
+            # Handle new images for bulk upload
+            new_images_base64 = prod.get('newImages', [])
+            new_image_urls = []
+            
+            for i, img_b64 in enumerate(new_images_base64):
+                time.sleep(0.3)
+                # Generate consistent filename using title, description, timestamp
+                filename = generate_filename(
+                    prod.get('title', 'product'),
+                    prod.get('description', ''),
+                    ts,
+                    f"bulk_{i}"
+                )
+                fname = f"images/{filename}"
+                upload_res = github_api("PUT", f"{conf['repo']}/contents/{fname}", conf['token'], {
+                    "message": "Upload product image",
+                    "content": img_b64
+                })
+                if upload_res and upload_res.status_code in [200, 201]:
+                    new_image_urls.append(f"https://raw.githubusercontent.com/{conf['repo']}/main/{fname}")
+            
+            # Create product object
+            item = {
+                "id": ts,
+                "title": prod.get('title', ''),
+                "price": prod.get('price', 0),
+                "category": prod.get('category', 'General'),
+                "offer": prod.get('offer', 0),
+                "description": prod.get('description', ''),
+                "buyLink": prod.get('link', ''),
+                "images": new_image_urls,
+                "image": new_image_urls[0] if new_image_urls else ""
+            }
+            
+            # Always add as new product in bulk upload
+            prods.insert(0, item)
+            logger.info("Added new product via bulk upload")
+            
+            # Update products file
+            content = base64.b64encode(json.dumps(prods, indent=2).encode('utf-8')).decode('utf-8')
+            update_res = github_api("PUT", f"{conf['repo']}/contents/all_products.json", conf['token'], {
+                "message": "Bulk upload products",
+                "content": content, 
+                "sha": sha
+            })
+            
+            if update_res and update_res.status_code in [200, 201]:
+                return jsonify({"success": True})
+            else:
+                return jsonify({"success": False})
+        except Exception as e:
+            logger.error(f"Bulk upload error: {e}")
+            return jsonify({"success": False, "error": str(e)})
+
+    @flask_app.route('/api/upload-banner', methods=['POST'])
+    def upload_banner():
+        logger.info("Upload banner API called")
+        try:
+            with open(CONFIG_FILE, 'r') as f: 
+                conf = json.load(f)
+            
+            data = request.json
+            image_b64 = data.get('image', '')
+            link = data.get('link', '').strip()
+            
+            if not image_b64:
+                return jsonify({"success": False, "error": "No image provided"})
+            
+            # Get existing banners
+            res = github_api("GET", f"{conf['repo']}/contents/banners.json", conf['token'])
+            if res and res.status_code == 200:
+                banners = json.loads(base64.b64decode(res.json()['content']).decode('utf-8'))
+                sha = res.json()['sha']
+            else:
+                banners = []
+                sha = None
+            
+            # Generate consistent filename for banner
+            ts = int(time.time()*1000)
+            filename = generate_filename(
+                "banner",
+                link or "banner",
+                ts,
+                "banner"
+            )
+            fname = f"banners/{filename}"
+            upload_res = github_api("PUT", f"{conf['repo']}/contents/{fname}", conf['token'], {
+                "message": "Upload banner image",
+                "content": image_b64
+            })
+            
+            if upload_res and upload_res.status_code in [200, 201]:
+                image_url = f"https://raw.githubusercontent.com/{conf['repo']}/main/{fname}"
+                
+                # Add new banner to list
+                banners.append({
+                    "image": image_url,
+                    "link": link
+                })
+                
+                # Update banners file
+                content = base64.b64encode(json.dumps(banners, indent=2).encode('utf-8')).decode('utf-8')
+                update_res = github_api("PUT", f"{conf['repo']}/contents/banners.json", conf['token'], {
+                    "message": "Add banner",
+                    "content": content, 
+                    "sha": sha
+                })
+                
+                if update_res and update_res.status_code in [200, 201]:
+                    return jsonify({"success": True})
+            
+            return jsonify({"success": False})
+        except Exception as e:
+            logger.error(f"Upload banner error: {e}")
+            return jsonify({"success": False, "error": str(e)})
+
+    @flask_app.route('/api/delete-banner', methods=['POST'])
+    def delete_banner():
+        logger.info("Delete banner API called")
+        try:
+            with open(CONFIG_FILE, 'r') as f: 
+                conf = json.load(f)
+            
+            idx = request.json.get('index', -1)
+            if idx == -1:
+                return jsonify({"success": False, "error": "Invalid index"})
+            
+            # Get existing banners
+            res = github_api("GET", f"{conf['repo']}/contents/banners.json", conf['token'])
+            if res and res.status_code == 200:
+                banners = json.loads(base64.b64decode(res.json()['content']).decode('utf-8'))
+                sha = res.json()['sha']
+                
+                if 0 <= idx < len(banners):
+                    # Delete the image file from GitHub
+                    banner = banners[idx]
+                    path = extract_image_path_from_url(banner['image'], conf['repo'])
+                    if path:
+                        delete_file_from_github(path, conf['token'], conf['repo'])
+                    
+                    banners.pop(idx)
+                    
+                    content = base64.b64encode(json.dumps(banners, indent=2).encode('utf-8')).decode('utf-8')
+                    del_res = github_api("PUT", f"{conf['repo']}/contents/banners.json", conf['token'], {
+                        "message": "Delete banner",
+                        "content": content, 
+                        "sha": sha
+                    })
+                    
+                    if del_res and del_res.statusCode in [200, 201]:
+                        return jsonify({"success": True})
+            
+            return jsonify({"success": False, "error": "Banner not found"})
+        except Exception as e:
+            logger.error(f"Delete banner error: {e}")
             return jsonify({"success": False, "error": str(e)})
 
     @flask_app.route('/api/delete', methods=['POST'])
@@ -1941,6 +2993,19 @@ def start_my_app():
                 sha = res.json()['sha']
                 
                 if 0 <= idx < len(prods):
+                    # Delete all image files associated with this product
+                    product = prods[idx]
+                    image_urls = []
+                    if product.get('images'):
+                        image_urls = product['images']
+                    elif product.get('image'):
+                        image_urls = [product['image']]
+                    
+                    for img_url in image_urls:
+                        path = extract_image_path_from_url(img_url, conf['repo'])
+                        if path:
+                            delete_file_from_github(path, conf['token'], conf['repo'])
+                    
                     prods.pop(idx)
                     
                     content = base64.b64encode(json.dumps(prods, indent=2).encode('utf-8')).decode('utf-8')
